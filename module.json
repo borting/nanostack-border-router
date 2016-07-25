@@ -11,6 +11,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "sal-stack-nanostack": "^5.0.0",
-    "atmel-rf-driver": "^3.0.0"
+    "atmel-rf-driver": "^3.0.0",
+    "sal-iface-6lowpan": "^3.0.0"
   }
 }

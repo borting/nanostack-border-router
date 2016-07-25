@@ -34,6 +34,7 @@
 #include "mac_api.h"
 #include "ethernet_mac_api.h"
 #include "sw_mac.h"
+#include "sal-iface-6lowpan/ns_sal.h" // for ns_sal_init_stack()
 
 #if defined(YOTTA_CFG_BORDER_ROUTER) || defined(MBED_CONF_APP_DEFINED_BR_CONFIG)
 #include "nanostack-border-router/mbed_config.h"
@@ -57,6 +58,7 @@ conf_t *global_config = static_config;
 
 static mac_api_t *api;
 static eth_mac_api_t *eth_mac_api;
+static border_router_handler_t _border_router_handler = NULL;
 
 /* The border router tasklet runs in grounded/non-storing mode */
 #define RPL_FLAGS RPL_GROUNDED | BR_DODAG_MOP_NON_STORING | RPL_DODAG_PREF(0)
@@ -133,8 +135,10 @@ static void initialize_channel_list(uint32_t channel);
 static void start_6lowpan(const uint8_t *backhaul_address);
 static void load_config(void);
 
-void border_router_start(void)
+void border_router_start(border_router_handler_t callback)
 {
+    _border_router_handler = callback;
+
     platform_timer_enable();
     eventOS_scheduler_init();
 
@@ -142,6 +146,9 @@ void border_router_start(void)
     net_init_core();
 
     protocol_stats_start(&nwk_stats);
+
+    /* Init 6LoWPAN SAL */
+    ns_sal_init_stack();
 
     eventOS_event_handler_create(
         &borderrouter_tasklet,
@@ -428,6 +435,9 @@ static void borderrouter_tasklet(arm_event_s *event)
 
                 if (backhaul_interface_up(net_backhaul_id) != 0) {
                     tr_debug("Backhaul bootstrap start failed");
+		    if (_border_router_handler) {
+			(*_border_router_handler)(BORDER_ROUTER_BACKHAUL_BOOTSTRAP_FAILED);
+		    }
                 } else {
                     tr_debug("Backhaul bootstrap started");
                     net_backhaul_state = INTERFACE_BOOTSTRAP_ACTIVE;
@@ -439,6 +449,9 @@ static void borderrouter_tasklet(arm_event_s *event)
                     tr_debug("Backhaul interface is down");
                     backhaul_if_id = -1;
                     net_backhaul_state = INTERFACE_IDLE_STATE;
+		    if (_border_router_handler) {
+			(*_border_router_handler)(BORDER_ROUTER_BACKHAUL_INTERFACE_DOWN);
+		    }
                 }
             }
             break;
@@ -498,6 +511,9 @@ static void start_6lowpan(const uint8_t *backhaul_address)
 
         if (retval < 0) {
             tr_error("Configuring 6LoWPAN bootstrap failed, retval = %d", retval);
+	    if (_border_router_handler) {
+		(*_border_router_handler)(BORDER_ROUTER_6LOWPAN_BOOTSTRAP_FAILED);
+	    }
             return;
         }
 
@@ -505,6 +521,9 @@ static void start_6lowpan(const uint8_t *backhaul_address)
 
         if (retval < 0) {
             tr_error("Failed to set link layer security mode, retval = %d", retval);
+	    if (_border_router_handler) {
+		(*_border_router_handler)(BORDER_ROUTER_6LOWPAN_BOOTSTRAP_FAILED);
+	    }
             return;
         }
 
@@ -518,6 +537,9 @@ static void start_6lowpan(const uint8_t *backhaul_address)
 
         if (retval < 0) {
             tr_error("Initializing 6LoWPAN border router failed, retval = %d", retval);
+	    if (_border_router_handler) {
+		(*_border_router_handler)(BORDER_ROUTER_6LOWPAN_BOOTSTRAP_FAILED);
+	    }
             return;
         }
 
@@ -527,6 +549,9 @@ static void start_6lowpan(const uint8_t *backhaul_address)
 
         if (retval < 0) {
             tr_error("Setting ND context failed, retval = %d", retval);
+	    if (_border_router_handler) {
+		(*_border_router_handler)(BORDER_ROUTER_6LOWPAN_BOOTSTRAP_FAILED);
+	    }
             return;
         }
 
@@ -572,6 +597,9 @@ static void start_6lowpan(const uint8_t *backhaul_address)
 
         if (retval) {
             tr_error("Failed to set channel list, retval = %d", retval);
+	    if (_border_router_handler) {
+		(*_border_router_handler)(BORDER_ROUTER_6LOWPAN_BOOTSTRAP_FAILED);
+	    }
             return;
         }
 
@@ -579,6 +607,9 @@ static void start_6lowpan(const uint8_t *backhaul_address)
 
         if (retval < 0) {
             tr_error("Failed to bring up the RF interface, retval = %d", retval);
+	    if (_border_router_handler) {
+		(*_border_router_handler)(BORDER_ROUTER_6LOWPAN_BOOTSTRAP_FAILED);
+	    }
             return;
         }
 
@@ -652,6 +683,10 @@ static void app_parse_network_event(arm_event_s *event)
                 tr_info("RF bootstrap ready, IPv6 = %s", buf);
                 arm_nwk_6lowpan_rpl_dodag_start(net_6lowpan_id);
                 net_6lowpan_state = INTERFACE_CONNECTED;
+		if (_border_router_handler) {
+		    (*_border_router_handler)(BORDER_ROUTER_CONNECTED);
+		}
+
                 tr_info("RF interface addresses:");
                 print_interface_addr(net_6lowpan_id);
                 tr_info("6LoWPAN Border Router Bootstrap Complete.");
